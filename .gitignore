@@ -1,0 +1,8 @@
+backend/.env
+backend/service_account.json
+backend/*.db
+.venv/
+node_modules/
+frontend/dist/
+frontend/.env
+__pycache__/

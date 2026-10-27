@@ -1,0 +1,13 @@
+{"info":{"name":"Task Tracker","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+"variable":[{"key":"base","value":"http://localhost:8000"}],
+"item":[
+{"name":"List tasks","request":{"method":"GET","url":"{{base}}/api/tasks"},
+ "event":[{"listen":"test","script":{"exec":["pm.test('200 and array',()=>{pm.response.to.have.status(200);pm.expect(pm.response.json()).to.be.an('array');});"]}}]},
+{"name":"Create task","request":{"method":"POST","url":"{{base}}/api/tasks","header":[{"key":"Content-Type","value":"application/json"}],
+ "body":{"mode":"raw","raw":"{\"assigned_by\":\"Ranjith Kumar\",\"assigned_to\":\"Kanchana\",\"task\":\"Postman test task\",\"deadline\":\"30/10/2026\"}"}},
+ "event":[{"listen":"test","script":{"exec":["pm.test('201',()=>pm.response.to.have.status(201));","pm.collectionVariables.set('row',pm.response.json().id);"]}}]},
+{"name":"Update status","request":{"method":"PATCH","url":"{{base}}/api/tasks/{{row}}","header":[{"key":"Content-Type","value":"application/json"}],
+ "body":{"mode":"raw","raw":"{\"status\":\"Completed\"}"}},
+ "event":[{"listen":"test","script":{"exec":["pm.test('200',()=>pm.response.to.have.status(200));"]}}]},
+{"name":"Delete task","request":{"method":"DELETE","url":"{{base}}/api/tasks/{{row}}"},
+ "event":[{"listen":"test","script":{"exec":["pm.test('200',()=>pm.response.to.have.status(200));"]}}]}]}
