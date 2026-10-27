@@ -39,6 +39,7 @@ engine = create_engine(DB_URL)
 Session = sessionmaker(engine)
 lock = threading.RLock()
 _last, version, _ws = None, 0, None
+last_error = ""
 
 def worksheet():
     global _ws
@@ -68,10 +69,14 @@ def read_sheet():
     return rows
 
 def sync():
-    global _last, version
+    global _last, version, last_error
     with lock:
         try: rows = read_sheet()
-        except Exception: return  # network/quota hiccup; retry on next tick
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e} | cause: {e.__cause__}"
+            print("SYNC ERROR:", last_error, flush=True)
+            return
+        last_error = ""
         if rows == _last: return
         with Session() as s:
             s.query(Task).delete(); s.add_all(Task(**r) for r in rows); s.commit()
@@ -149,3 +154,6 @@ def update_task(row: int, body: TaskPatch):
 def delete_task(row: int):
     def rm(ws, cols): check_row(ws, cols, row); ws.delete_rows(row)
     write_sheet(rm); return {"ok": True}
+@app.get("/api/health")
+def health():
+    return {"version": version, "tasks_cached": len(_last or []), "last_error": last_error}
