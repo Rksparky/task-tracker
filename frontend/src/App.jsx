@@ -149,7 +149,7 @@ function Dashboard({ user, tasks, go }) {
   const open = tasks.filter((t) => t.status !== "Completed");
   const overdue = open.filter((t) => dayDiff(t.deadline) < 0).length;
   const dueToday = open.filter((t) => dayDiff(t.deadline) === 0).length;
-  const upcoming = open.filter((t) => dayDiff(t.deadline) >= 0).sort((a, b) => parseD(a.deadline) - parseD(b.deadline)).slice(0, 5);
+  const upcoming = open.filter((t) => parseD(t.deadline)).sort((a, b) => parseD(a.deadline) - parseD(b.deadline)).slice(0, 5);
   const total = tasks.length;
   let acc = 0;
   const stops = STATUSES.map((s) => { const from = (acc / total) * 100; acc += count(tasks, s); return `${COLORS[s]} ${from}% ${(acc / total) * 100}%`; }).join(",");
