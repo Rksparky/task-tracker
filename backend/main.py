@@ -7,7 +7,7 @@ import json, os, threading, time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-
+from auth import install_auth
 import gspread
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -112,6 +112,7 @@ async def lifespan(app):
     yield
 
 app = FastAPI(title="Task Tracker", lifespan=lifespan)
+install_auth(app)
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
                    allow_methods=["*"], allow_headers=["*"])
 
