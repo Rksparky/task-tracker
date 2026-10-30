@@ -81,6 +81,8 @@ function Shell({ user, logout }) {
   const [live, setLive] = useState(true);
   const [error, setError] = useState("");
   const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState("");
   const [known, setKnown] = useState([]);
   useEffect(() => { api("/api/people").then((p) => setKnown(p.map((x) => x.name))).catch(() => {}); }, []);
   const people = mergeNames(known, tasks.flatMap((t) => [t.assigned_to, t.assigned_by]));
@@ -102,11 +104,19 @@ function Shell({ user, logout }) {
 
   const act = async (fn) => { try { setError(""); await fn(); await reload(); } catch (e) { setError(e.message); } };
   const patch = (id, body) => act(() => api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }));
-  const save = (e) => {
+  // The pop-up stays open until the server confirms, and shows any error inside it.
+  const save = async (e) => {
     e.preventDefault();
-    const { id, ...body } = form;
-    if (id) patch(id, body); else act(() => api("/api/tasks", { method: "POST", body: JSON.stringify(body) }));
-    setForm(null);
+    const { id, assigned_by, assigned_to, task, deadline, status, work_update } = form;
+    const body = JSON.stringify({ assigned_by, assigned_to, task, deadline, status, work_update });
+    setSaving(true); setFormErr("");
+    try {
+      await api(id ? `/api/tasks/${id}` : "/api/tasks", { method: id ? "PATCH" : "POST", body });
+      await reload(); setForm(null);
+    } catch (x) {
+      setFormErr(x.message === "Failed to fetch" ? "Can't reach the server. It may be waking up, so try again in a minute." : x.message);
+    }
+    setSaving(false);
   };
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const isAdmin = user.role.toLowerCase() === "admin";
@@ -126,7 +136,7 @@ function Shell({ user, logout }) {
         </header>
         {error && <div className="error" role="alert">{error}</div>}
         {page === "dashboard" && <Dashboard user={user} tasks={tasks} go={setPage} />}
-        {page === "tasks" && <Tasks tasks={tasks} patch={patch} act={act} open={(t) => setForm(t || { ...EMPTY, assigned_by: user.name })} />}
+        {page === "tasks" && <Tasks tasks={tasks} patch={patch} act={act} open={(t) => { setFormErr(""); setForm(t || { ...EMPTY, assigned_by: user.name }); }} />}
         {page === "profile" && <Profile user={user} tasks={tasks} logout={logout} />}
         {page === "attendance" && <Attendance />}
         {page === "track" && <Track />}
@@ -147,7 +157,8 @@ function Shell({ user, logout }) {
               <label>Due date<input type="date" value={toISO(form.deadline)} onChange={(e) => setForm({ ...form, deadline: toDMY(e.target.value) })} /></label>
               <label>Status<select value={form.status} onChange={set("status")}>{[...new Set([...STATUSES, form.status])].map((s) => <option key={s}>{s}</option>)}</select></label>
             </div>
-            <div className="row end"><button type="button" onClick={() => setForm(null)}>Cancel</button><button className="primary">{form.id ? "Save changes" : "Add task"}</button></div>
+            {formErr && <div className="error" role="alert">{formErr}</div>}
+            <div className="row end"><button type="button" onClick={() => setForm(null)}>Cancel</button><button className="primary" disabled={saving}>{saving ? "Saving…" : form.id ? "Save changes" : "Add task"}</button></div>
           </form>
         </div>
       )}
