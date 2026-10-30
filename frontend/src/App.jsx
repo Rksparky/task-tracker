@@ -156,6 +156,17 @@ function Shell({ user, logout }) {
 }
 
 function Dashboard({ user, tasks, go }) {
+  const [svc, setSvc] = useState(null);
+  const [prj, setPrj] = useState(null);
+  useEffect(() => {
+    const load = () => {
+      api("/api/records/services").then(setSvc).catch(() => setSvc([]));
+      api("/api/records/projects").then(setPrj).catch(() => setPrj([]));
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, []);
   const open = tasks.filter((t) => t.status !== "Completed");
   const overdue = open.filter((t) => dayDiff(t.deadline) < 0).length;
   const dueToday = open.filter((t) => dayDiff(t.deadline) === 0).length;
@@ -192,6 +203,12 @@ function Dashboard({ user, tasks, go }) {
             <ul className="legend">{STATUSES.map((s) => <li key={s}><i style={{ background: COLORS[s] }} />{s}<b>{count(tasks, s)}</b></li>)}</ul>
           </div>
         </section>
+      </div>
+      <div className="grid2 even sec">
+        <RecordSummary title="Services" rows={svc} page="services" go={go} statuses={["New", "In Progress", "Resolved", "Closed"]}
+          done={["Resolved", "Closed"]} doneLabel="Resolved" money="amount" moneyLabel="Total amount" />
+        <RecordSummary title="Projects" rows={prj} page="projects" go={go} statuses={["Planned", "In Progress", "On Hold", "Completed"]}
+          done={["Completed"]} doneLabel="Completed" money="project_cost" moneyLabel="Total project cost" />
       </div>
     </>
   );
@@ -605,5 +622,35 @@ function Schedule({ initial, people, defType, onSave, onClose }) {
         <div className="row end"><button type="button" onClick={onClose}>Cancel</button><button type="button" className="primary" onClick={() => onSave(a)}>Save</button></div>
       </div>
     </div>
+  );
+}
+
+const STATUS_COLORS = { New: "#2563eb", "In Progress": "#f59e0b", Resolved: "#16a34a", Closed: "#6b7280", Planned: "#7c3aed", "On Hold": "#dc2626", Completed: "#16a34a" };
+
+function RecordSummary({ title, rows, statuses, done, doneLabel, money, moneyLabel, go, page }) {
+  if (!rows) return <section className="card"><h2>{title}</h2><p className="muted pad">Loading…</p></section>;
+  const total = rows.length;
+  const count = (s) => rows.filter((r) => r.status === s).length;
+  const finished = rows.filter((r) => done.includes(r.status)).length;
+  const urgent = rows.filter((r) => ["High", "Urgent"].includes(r.priority) && !done.includes(r.status)).length;
+  const amount = rows.reduce((sum, r) => sum + (+r[money] || 0), 0);
+  const colour = (s) => STATUS_COLORS[s] || "#9ca3af";
+  return (
+    <section className="card">
+      <div className="row between"><h2>{title}</h2><button className="link" onClick={() => go(page)}>View all →</button></div>
+      <div className="mini">
+        {[["Total", total], ["Open", total - finished], [doneLabel, finished], ["High priority", urgent]].map(([l, v]) => <div key={l}><b>{v}</b><small>{l}</small></div>)}
+      </div>
+      <div className="stack">{statuses.filter((s) => count(s)).map((s) => <i key={s} title={`${s}: ${count(s)}`} style={{ width: `${(count(s) / total) * 100}%`, background: colour(s) }} />)}</div>
+      <ul className="legend inline">{statuses.map((s) => <li key={s}><i style={{ background: colour(s) }} />{s}<b>{count(s)}</b></li>)}</ul>
+      <p className="muted">{moneyLabel}: <b>₹{Math.round(amount).toLocaleString("en-IN")}</b></p>
+      {rows.slice(0, 3).map((r) => (
+        <div className="item" key={r.id}>
+          <div><b>{r.project_name || r.company}</b><small>{r.project_name ? r.company : r.problem || r.problem_type || r.service_type || ""}</small></div>
+          <span className={"pill " + slug(r.status)}>{r.status || "—"}</span>
+        </div>
+      ))}
+      {!total && <p className="muted pad">Nothing here yet.</p>}
+    </section>
   );
 }
