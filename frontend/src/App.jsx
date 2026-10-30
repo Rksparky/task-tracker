@@ -178,48 +178,17 @@ function Dashboard({ user, tasks, go }) {
     const id = setInterval(load, 30000);
     return () => clearInterval(id);
   }, []);
-  const open = tasks.filter((t) => t.status !== "Completed");
-  const overdue = open.filter((t) => dayDiff(t.deadline) < 0).length;
-  const dueToday = open.filter((t) => dayDiff(t.deadline) === 0).length;
-  const upcoming = open.filter((t) => parseD(t.deadline)).sort((a, b) => parseD(a.deadline) - parseD(b.deadline)).slice(0, 5);
-  const total = tasks.length;
-  let acc = 0;
-  const stops = STATUSES.map((s) => { const from = (acc / total) * 100; acc += count(tasks, s); return `${COLORS[s]} ${from}% ${(acc / total) * 100}%`; }).join(",");
-  const cards = [
-    ["Total tasks", total, `${dueToday} due today`],
-    ["Pending", count(tasks, "Pending"), `${overdue} overdue`],
-    ["In progress", count(tasks, "In Progress"), "being worked on"],
-    ["Completed", count(tasks, "Completed"), total ? `${Math.round((count(tasks, "Completed") / total) * 100)}% done` : "—"],
-  ];
   return (
     <>
       <h1>Dashboard</h1>
       <p className="muted">Welcome back, {user.name.split(" ")[0]}. Here's what's happening with your work today.</p>
-      <div className="stats">{cards.map(([l, n, s]) => <div className="card stat" key={l}><span className="muted">{l}</span><b>{n}</b><small>{s}</small></div>)}</div>
-      <div className="grid2">
-        <section className="card">
-          <div className="row between"><h2>Upcoming tasks</h2><button className="link" onClick={() => go("tasks")}>View all →</button></div>
-          {upcoming.map((t) => (
-            <div className="item" key={t.id}>
-              <div><b>{t.task}</b><small>{t.assigned_to}</small></div>
-              <div className="right"><span className={"pill " + slug(t.status)}>{t.status}</span><small>{dueLabel(t)}</small></div>
-            </div>
-          ))}
-          {!upcoming.length && <p className="muted pad">Nothing due soon.</p>}
-        </section>
-        <section className="card">
-          <h2>Quick view</h2>
-          <div className="donutwrap">
-            <div className="donut" style={{ background: total ? `conic-gradient(${stops})` : "#e5e7eb" }}><div><b>{total}</b><small>Total tasks</small></div></div>
-            <ul className="legend">{STATUSES.map((s) => <li key={s}><i style={{ background: COLORS[s] }} />{s}<b>{count(tasks, s)}</b></li>)}</ul>
-          </div>
-        </section>
-      </div>
-      <div className="grid2 even sec">
-        <RecordSummary title="Services" rows={svc} page="services" go={go} statuses={["New", "In Progress", "Resolved", "Closed"]}
-          done={["Resolved", "Closed"]} doneLabel="Resolved" money="amount" moneyLabel="Total amount" />
-        <RecordSummary title="Projects" rows={prj} page="projects" go={go} statuses={["Planned", "In Progress", "On Hold", "Completed"]}
-          done={["Completed"]} doneLabel="Completed" money="project_cost" moneyLabel="Total project cost" />
+      <div className="trio">
+        <Summary title="Tasks" page="tasks" go={go} rows={tasks} statuses={STATUSES} done={["Completed"]} doneLabel="Completed"
+          dueKey="deadline" label={(r) => r.task} sub={(r) => r.assigned_to} />
+        <Summary title="Services" page="services" go={go} rows={svc} statuses={["New", "In Progress", "Resolved", "Closed"]} done={["Resolved", "Closed"]} doneLabel="Resolved"
+          dueKey="expected_closure" label={(r) => r.company} sub={(r) => r.problem || r.problem_type || r.service_type} money={{ key: "amount", label: "Total amount" }} />
+        <Summary title="Projects" page="projects" go={go} rows={prj} statuses={["Planned", "In Progress", "On Hold", "Completed"]} done={["Completed"]} doneLabel="Completed"
+          dueKey="expected_end_date" label={(r) => r.project_name} sub={(r) => r.company} money={{ key: "project_cost", label: "Total project cost" }} />
       </div>
     </>
   );
@@ -636,32 +605,43 @@ function Schedule({ initial, people, defType, onSave, onClose }) {
   );
 }
 
-const STATUS_COLORS = { New: "#2563eb", "In Progress": "#f59e0b", Resolved: "#16a34a", Closed: "#6b7280", Planned: "#7c3aed", "On Hold": "#dc2626", Completed: "#16a34a" };
+const STATUS_COLORS = { Pending: "#f59e0b", New: "#8b5cf6", Planned: "#8b5cf6", "In Progress": "#2563eb", "On Hold": "#ef4444", Resolved: "#16a34a", Completed: "#16a34a", Closed: "#6b7280", Other: "#9ca3af" };
 
-function RecordSummary({ title, rows, statuses, done, doneLabel, money, moneyLabel, go, page }) {
-  if (!rows) return <section className="card"><h2>{title}</h2><p className="muted pad">Loading…</p></section>;
+// One card layout used for Tasks, Services and Projects: counts, pie chart by status, and what is due soonest.
+function Summary({ title, page, go, rows, statuses, done, doneLabel, dueKey, label, sub, money }) {
+  if (!rows) return <section className="card sum"><h2>{title}</h2><p className="muted pad">Loading…</p></section>;
   const total = rows.length;
-  const count = (s) => rows.filter((r) => r.status === s).length;
-  const finished = rows.filter((r) => done.includes(r.status)).length;
-  const urgent = rows.filter((r) => ["High", "Urgent"].includes(r.priority) && !done.includes(r.status)).length;
-  const amount = rows.reduce((sum, r) => sum + (+r[money] || 0), 0);
+  const other = total - statuses.reduce((n, s) => n + rows.filter((r) => r.status === s).length, 0);
+  const names = other ? [...statuses, "Other"] : statuses;
+  const cnt = (s) => (s === "Other" ? other : rows.filter((r) => r.status === s).length);
+  const open = rows.filter((r) => !done.includes(r.status));
+  const overdue = open.filter((r) => dayDiff(r[dueKey]) < 0).length;
+  const dueToday = open.filter((r) => dayDiff(r[dueKey]) === 0).length;
+  const soon = open.filter((r) => parseD(r[dueKey])).sort((a, b) => parseD(a[dueKey]) - parseD(b[dueKey])).slice(0, 5);
   const colour = (s) => STATUS_COLORS[s] || "#9ca3af";
+  const when = (r) => { const n = dayDiff(r[dueKey]); return n < 0 ? `Overdue · ${r[dueKey]}` : n === 0 ? "Today" : n === 1 ? "Tomorrow" : r[dueKey]; };
+  let acc = 0;
+  const stops = names.filter((s) => cnt(s)).map((s) => { const from = (acc / total) * 100; acc += cnt(s); return `${colour(s)} ${from}% ${(acc / total) * 100}%`; }).join(",");
+  const amount = money ? rows.reduce((sum, r) => sum + (+r[money.key] || 0), 0) : 0;
   return (
-    <section className="card">
+    <section className="card sum">
       <div className="row between"><h2>{title}</h2><button className="link" onClick={() => go(page)}>View all →</button></div>
       <div className="mini">
-        {[["Total", total], ["Open", total - finished], [doneLabel, finished], ["High priority", urgent]].map(([l, v]) => <div key={l}><b>{v}</b><small>{l}</small></div>)}
+        {[["Total", total], ["Open", open.length], [doneLabel, total - open.length], ["Overdue", overdue]].map(([l, v]) => <div key={l}><b>{v}</b><small>{l}</small></div>)}
       </div>
-      <div className="stack">{statuses.filter((s) => count(s)).map((s) => <i key={s} title={`${s}: ${count(s)}`} style={{ width: `${(count(s) / total) * 100}%`, background: colour(s) }} />)}</div>
-      <ul className="legend inline">{statuses.map((s) => <li key={s}><i style={{ background: colour(s) }} />{s}<b>{count(s)}</b></li>)}</ul>
-      <p className="muted">{moneyLabel}: <b>₹{Math.round(amount).toLocaleString("en-IN")}</b></p>
-      {rows.slice(0, 3).map((r) => (
+      <div className="piewrap">
+        <div className="pie" role="img" aria-label={`${title} by status`} style={{ background: total ? `conic-gradient(${stops})` : "#e5e7eb" }} />
+        <ul className="legend">{names.map((s) => <li key={s}><i style={{ background: colour(s) }} />{s}<b>{cnt(s)}</b></li>)}</ul>
+      </div>
+      <p className="muted note">{money ? `${money.label}: ₹${Math.round(amount).toLocaleString("en-IN")}` : `${dueToday} due today`}</p>
+      <h3 className="subhead">Due soon</h3>
+      {soon.map((r) => (
         <div className="item" key={r.id}>
-          <div><b>{r.project_name || r.company}</b><small>{r.project_name ? r.company : r.problem || r.problem_type || r.service_type || ""}</small></div>
-          <span className={"pill " + slug(r.status)}>{r.status || "—"}</span>
+          <div><b>{label(r) || "—"}</b><small>{sub(r)}</small></div>
+          <div className="right"><span className={"pill " + slug(r.status)}>{r.status || "—"}</span><small className={dayDiff(r[dueKey]) < 0 ? "late" : ""}>{when(r)}</small></div>
         </div>
       ))}
-      {!total && <p className="muted pad">Nothing here yet.</p>}
+      {!soon.length && <p className="muted pad">Nothing due.</p>}
     </section>
   );
 }
