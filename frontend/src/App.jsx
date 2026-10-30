@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ActivityFlow from "./ServiceActivity";
 
 const API = import.meta.env.VITE_API ?? (import.meta.env.PROD ? "" : "http://localhost:8000");
 const STATUSES = ["Pending", "In Progress", "Completed"];
@@ -511,6 +512,15 @@ function Records({ kind, user, people }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
+  const [flow, setFlow] = useState(null);  // service ticket being worked on
+  const sameName = (a, b) => { a = (a || "").trim().toLowerCase(); b = (b || "").trim().toLowerCase(); return !!a && !!b && (a.startsWith(b) || b.startsWith(a)); };
+  const isMine = (r) => kind === "services" && sameName(r.action?.actor, user.name) && !["Resolved", "Closed"].includes(r.status);
+  const started = (r) => r.status === "In Progress";
+  const accept = async (r) => {
+    setErr("");
+    try { await api(`/api/records/services/${r.id}/accept`, { method: "POST" }); await load(); setFlow({ ...r, status: "In Progress" }); }
+    catch (x) { setErr(x.message); }
+  };
   const load = () => api(`/api/records/${kind}`).then(setRows).catch((e) => setErr(e.message));
   useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id); }, []);
 
@@ -548,10 +558,16 @@ function Records({ kind, user, people }) {
           <thead><tr>{cfg.cols.map(([, l]) => <th key={l}>{l}</th>)}<th>Scheduled action</th><th /></tr></thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} className={isMine(r) ? "mine" : ""} onClick={isMine(r) && started(r) ? () => setFlow(r) : undefined}>
                 {cfg.cols.map(([k]) => <td key={k}>{cell(r, k)}</td>)}
                 <td>{r.action ? `${r.action.mode} · ${r.action.date} ${r.action.time}${r.action.actor ? " · " + r.action.actor : ""}` : "—"}</td>
-                <td><button onClick={() => openEdit(r)}>Edit</button></td>
+                <td>
+                  <div className="row">
+                    {isMine(r) && !started(r) && <button className="primary" onClick={(e) => { e.stopPropagation(); accept(r); }}>Accept &amp; start</button>}
+                    {isMine(r) && started(r) && <button className="primary" onClick={(e) => { e.stopPropagation(); setFlow(r); }}>Open ticket</button>}
+                    <button onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -576,6 +592,7 @@ function Records({ kind, user, people }) {
           </form>
         </div>
       )}
+      {flow && <ActivityFlow ticket={flow} user={user} people={people} api={api} onClose={() => setFlow(null)} onDone={() => { setFlow(null); load(); }} />}
       {sched && form && <Schedule initial={form.action} people={people} defType={cfg.activity} onClose={() => setSched(false)} onSave={(a) => { setForm({ ...form, action: a }); setSched(false); }} />}
     </>
   );

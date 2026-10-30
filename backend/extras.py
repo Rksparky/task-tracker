@@ -186,3 +186,80 @@ def edit_record(kind: str, rid: str, body: Record):
     if not row: raise HTTPException(404, "That record was not found. Refresh the page and try again.")
     ws.update(range_name=f"D{row}:{rowcol_to_a1(row, 3 + len(keys) + 1)}", values=[vals + [act]], value_input_option="RAW")
     return {"id": rid}
+
+
+# ---------- Service tickets: accept, log activity, schedule next, close ----------
+ACT_HEAD = ["Ticket ID", "Logged at", "Logged by", "Result", "Mode", "Activity type", "Stage", "Discussion / work done", "From", "To",
+            "Contact", "Activity by", "Money", "DCR no", "KMS", "Claim KMS", "Email report", "Details"]
+CLOSE_TO_STATUS = {"Complete": "Resolved", "Incomplete": "In Progress", "Cancelled": "Closed"}
+
+class Activity(BaseModel):
+    step: str                                   # "next" or "close"
+    log: dict[str, str] = {}
+    next: dict[str, str] = {}
+    close: dict[str, str] = {}
+
+def same_name(a, b):
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    return bool(a and b and (a.startswith(b) or b.startswith(a)))
+
+def ticket_row(ws, rid):
+    keys = KINDS["services"][2]
+    for i, r in enumerate(ws.get_all_values(), 1):
+        if i > 1 and r and r[0] == rid:
+            r = r + [""] * (4 + len(keys) - len(r))
+            return i, r, keys
+    raise HTTPException(404, "That ticket was not found. Refresh the page and try again.")
+
+def check_mine(request, r, keys):
+    """Only the person the ticket is scheduled for (or an admin) may work on it."""
+    u = request.state.user
+    try: actor = (json.loads(r[3 + len(keys)]) or {}).get("actor", "") if r[3 + len(keys)] else ""
+    except ValueError: actor = ""
+    if u["role"].lower() != "admin" and not same_name(actor, u["name"]):
+        raise HTTPException(403, "This ticket is not assigned to you.")
+
+@router.post("/api/records/services/{rid}/accept")
+def accept_ticket(rid: str, request: Request):
+    ws = tab("Services", head("services"))
+    row, r, keys = ticket_row(ws, rid)
+    check_mine(request, r, keys)
+    col = 3 + keys.index("status") + 1
+    if r[col - 1] in ("Resolved", "Closed"): raise HTTPException(400, "This ticket is already finished.")
+    if r[col - 1] != "In Progress":
+        ws.update(range_name=rowcol_to_a1(row, col), values=[["In Progress"]], value_input_option="RAW")
+        tab("Activities", ACT_HEAD).append_row([rid, now().strftime("%d/%m/%Y %H:%M"), request.state.user["name"], "Accepted"] + [""] * 14,
+                                               value_input_option="RAW")
+    return {"id": rid, "status": "In Progress"}
+
+@router.post("/api/records/services/{rid}/activity")
+def ticket_activity(rid: str, body: Activity, request: Request):
+    if body.step not in ("next", "close"): raise HTTPException(400, "Unknown step")
+    u = request.state.user
+    ws = tab("Services", head("services"))
+    row, r, keys = ticket_row(ws, rid)
+    check_mine(request, r, keys)
+    vals = r[3:3 + len(keys)] + [r[3 + len(keys)]]       # editable columns + Schedule action
+    si, ai = keys.index("status"), len(keys)
+    L, extra = body.log, (body.next if body.step == "next" else body.close)
+    if not L.get("discussion", "").strip(): raise HTTPException(400, "Enter the discussion / work done.")
+
+    if body.step == "next":
+        n = body.next
+        vals[si] = "In Progress"
+        vals[ai] = json.dumps({k: (n.get(k, "") if k not in ("notify_mobile", "notify_email") else n.get(k, "No")) for k in ACTION_KEYS})
+        result = f"Next: {n.get('mode', '')} {n.get('date', '')} {n.get('time', '')} ({n.get('actor', '')})"
+    else:
+        c = body.close
+        vals[si] = CLOSE_TO_STATUS.get(c.get("status", ""), "Resolved")
+        for field, key in (("priority", "priority"), ("type", "ticket_type"), ("problem_type", "work_type")):
+            if c.get(key): vals[keys.index(field)] = c[key][:2000]
+        if vals[si] in ("Resolved", "Closed"): vals[ai] = ""   # nothing left to do
+        result = f"Closed: {c.get('status', '')}"
+    tab("Activities", ACT_HEAD).append_row(
+        [rid, now().strftime("%d/%m/%Y %H:%M"), u["name"], result, L.get("mode", ""), L.get("activity_type", ""), L.get("stage", ""),
+         L.get("discussion", "")[:2000], f"{L.get('from_date', '')} {L.get('from_time', '')}", f"{L.get('to_date', '')} {L.get('to_time', '')}",
+         L.get("contact", ""), L.get("activity_by", ""), L.get("money", ""), L.get("dcr_no", ""), L.get("kms", ""),
+         L.get("claim_kms", ""), L.get("email_report", ""), json.dumps(extra)[:5000]], value_input_option="RAW")
+    ws.update(range_name=f"D{row}:{rowcol_to_a1(row, 3 + len(keys) + 1)}", values=[vals], value_input_option="RAW")
+    return {"id": rid, "status": vals[si]}
