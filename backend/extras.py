@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
+from gspread.utils import rowcol_to_a1
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from auth import load_users
@@ -157,15 +158,31 @@ def list_records(kind: str):
         out.append(d)
     return out[:500]
 
-@router.post("/api/records/{kind}", status_code=201)
-def add_record(kind: str, body: Record, request: Request):
-    name, prefix, keys = kind_of(kind)
-    u = request.state.user
+def prepare(kind, body):
+    _, _, keys = kind_of(kind)
     if not body.data.get("company", "").strip(): raise HTTPException(400, "Company is required")
     if kind == "projects" and not body.data.get("project_name", "").strip(): raise HTTPException(400, "Project name is required")
-    ws = tab(name, head(kind))
-    rid = f"{prefix}-{len(ws.get_all_values()):04d}"
     vals = [body.data.get(k, "").strip()[:2000] for k in keys]
     act = json.dumps({k: body.action.get(k, "")[:500] for k in ACTION_KEYS}) if body.action else ""
+    return vals, act
+
+@router.post("/api/records/{kind}", status_code=201)
+def add_record(kind: str, body: Record, request: Request):
+    name, prefix, _ = kind_of(kind)
+    u = request.state.user
+    vals, act = prepare(kind, body)
+    ws = tab(name, head(kind))
+    rid = f"{prefix}-{len(ws.get_all_values()):04d}"
     ws.append_row([rid, now().strftime("%d/%m/%Y %H:%M"), u["name"]] + vals + [act], value_input_option="RAW")
+    return {"id": rid}
+
+@router.patch("/api/records/{kind}/{rid}")
+def edit_record(kind: str, rid: str, body: Record):
+    """Change a service/project, including its scheduled action. ID, Created and Created by stay as they were."""
+    name, _, keys = kind_of(kind)
+    vals, act = prepare(kind, body)
+    ws = tab(name, head(kind))
+    row = next((i for i, r in enumerate(ws.get_all_values(), 1) if i > 1 and r and r[0] == rid), None)
+    if not row: raise HTTPException(404, "That record was not found. Refresh the page and try again.")
+    ws.update(range_name=f"D{row}:{rowcol_to_a1(row, 3 + len(keys) + 1)}", values=[vals + [act]], value_input_option="RAW")
     return {"id": rid}

@@ -473,7 +473,7 @@ const COMPANY = [["company", "Company", "text"], ["contact", "Contact", "text"],
   ["contact_mobile", "Mobile", "text"], ["contact_email", "Email", "email"], ["manager", "Manager", "text"], ["manager_mobile", "Manager mobile", "text"], ["manager_email", "Manager email", "email"]];
 const KINDS = {
   services: {
-    title: "Services", modal: "Add service", submit: "Ticket", activity: "Fault",
+    title: "Services", modal: "Add service", edit: "Edit service", submit: "Ticket", activity: "Fault",
     company: [["serial_no", "Serial no.", "text"], ...COMPANY, ["email_subject", "Email subject line", "text"]],
     details: [["type", "Type", "select", ["Chargeable", "Non-chargeable", "Warranty", "AMC"], "Chargeable"], ["generate_otp", "Generate OTP", "check"],
       ["amount", "Amount", "number", null, "0"], ["open_date", "Open date", "date", null, "today"], ["expected_closure", "Expected closure date", "date", null, "today"],
@@ -484,7 +484,7 @@ const KINDS = {
     cols: [["id", "ID"], ["company", "Company"], ["contact", "Contact"], ["service_type", "Service type"], ["problem_type", "Problem"], ["status", "Status"], ["priority", "Priority"], ["expected_closure", "Closure date"], ["amount", "Amount"]],
   },
   projects: {
-    title: "Projects", modal: "Create project", submit: "Create project", activity: "Follow-up",
+    title: "Projects", modal: "Create project", edit: "Edit project", submit: "Create project", activity: "Follow-up",
     company: [...COMPANY, ["project_name", "Project name", "text"]],
     details: [["source", "Source", "select", ["Campaign", "Reference", "Website", "Walk-in", "Existing customer"], "Campaign"], ["show_in_pdf", "Show in PDF", "check"],
       ["source_details", "Source details", "text"], ["start_date", "Start date", "date", null, "today"], ["expected_end_date", "Expected end date", "date", null, "today"],
@@ -520,10 +520,16 @@ function Records({ kind, user, people }) {
     [...cfg.company, ...cfg.details].forEach(([k, , t, , d]) => { data[k] = d === "today" ? todayDMY() : t === "check" ? "No" : d ?? ""; });
     setForm({ data: { ...data, manager: user.name, description: "" }, action: null });
   };
+  const openEdit = (r) => {
+    setErr("");
+    const data = { description: r.description || "" };
+    [...cfg.company, ...cfg.details].forEach(([k, , t]) => { data[k] = r[k] || (t === "check" ? "No" : ""); });
+    setForm({ id: r.id, data, action: r.action });
+  };
   const set = (k, v) => setForm((f) => ({ ...f, data: { ...f.data, [k]: v } }));
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr("");
-    try { await api(`/api/records/${kind}`, { method: "POST", body: JSON.stringify({ data: form.data, action: form.action }) }); setForm(null); await load(); }
+    try { await api(form.id ? `/api/records/${kind}/${form.id}` : `/api/records/${kind}`, { method: form.id ? "PATCH" : "POST", body: JSON.stringify({ data: form.data, action: form.action }) }); setForm(null); await load(); }
     catch (x) { setErr(x.message); }
     setBusy(false);
   };
@@ -539,12 +545,13 @@ function Records({ kind, user, people }) {
       {err && !form && <div className="error" role="alert">{err}</div>}
       <div className="card scroll">
         <table>
-          <thead><tr>{cfg.cols.map(([, l]) => <th key={l}>{l}</th>)}<th>Scheduled action</th></tr></thead>
+          <thead><tr>{cfg.cols.map(([, l]) => <th key={l}>{l}</th>)}<th>Scheduled action</th><th /></tr></thead>
           <tbody>
             {shown.map((r) => (
               <tr key={r.id}>
                 {cfg.cols.map(([k]) => <td key={k}>{cell(r, k)}</td>)}
                 <td>{r.action ? `${r.action.mode} · ${r.action.date} ${r.action.time}${r.action.actor ? " · " + r.action.actor : ""}` : "—"}</td>
+                <td><button onClick={() => openEdit(r)}>Edit</button></td>
               </tr>
             ))}
           </tbody>
@@ -555,7 +562,7 @@ function Records({ kind, user, people }) {
       {form && (
         <div className="overlay" onClick={() => setForm(null)}>
           <form className="modal card rec" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-            <div className="titlebar"><h2>{cfg.modal}</h2><button type="button" aria-label="Close" onClick={() => setForm(null)}>✕</button></div>
+            <div className="titlebar"><h2>{form.id ? cfg.edit : cfg.modal}</h2><button type="button" aria-label="Close" onClick={() => setForm(null)}>✕</button></div>
             <div className="panels">
               <div><h3>For company</h3><div className="panel">{cfg.company.map((f) => <Field key={f[0]} f={f} v={form.data[f[0]]} set={set} />)}</div></div>
               <div><h3>Details</h3><div className="panel two">{cfg.details.map((f) => <Field key={f[0]} f={f} v={form.data[f[0]]} set={set} />)}</div></div>
@@ -564,7 +571,7 @@ function Records({ kind, user, people }) {
             {err && <div className="error" role="alert">{err}</div>}
             <div className="row between">
               <button type="button" className="link" onClick={() => setSched(true)}>Schedule action{form.action ? ` ✓ ${form.action.mode}, ${form.action.date} ${form.action.time}${form.action.actor ? ", " + form.action.actor : ""}` : ""}</button>
-              <button className="primary" disabled={busy}>{busy ? "Saving…" : cfg.submit}</button>
+              <button className="primary" disabled={busy}>{busy ? "Saving…" : form.id ? "Save changes" : cfg.submit}</button>
             </div>
           </form>
         </div>
