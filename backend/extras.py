@@ -1,4 +1,5 @@
 """Attendance (office geofence), trip tracking with petrol estimate, and the admin report."""
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from math import asin, cos, radians, sin, sqrt
@@ -32,6 +33,8 @@ def hm(iso):
 def admin_only(request):
     if request.state.user["role"].lower() != "admin": raise HTTPException(403, "Admins only")
 
+def gmap(r): return f"https://www.google.com/maps?q={r[5]},{r[6]}" if r and r[5] and r[6] else ""
+
 def trip_row(r): return dict(zip(T_KEYS, r + [""] * (11 - len(r))))
 
 class Loc(BaseModel):
@@ -58,19 +61,15 @@ def attendance_today(request: Request):
 
 @router.post("/api/attendance")
 def check_in(body: Loc, request: Request):
+    """Always accepted: the place where the person marked attendance is recorded."""
     u = request.state.user
-    if OFFICE == (0.0, 0.0): raise HTTPException(503, "The office location isn't set yet. Ask the admin.")
     r = today_row(u["username"])
     if r: return {"checked_in": True, "time": r[3], "message": f"Already marked present at {r[3]}."}
-    if body.accuracy > MAX_ACC:
-        raise HTTPException(400, f"Your GPS isn't accurate enough ({round(body.accuracy)} m). Move near a window or outdoors and try again.")
-    d = km(OFFICE, (body.lat, body.lng)) * 1000
-    if d > RADIUS:
-        raise HTTPException(403, f"You are about {round(d)} m from the office. Attendance is only accepted within {round(RADIUS)} m.")
+    d = round(km(OFFICE, (body.lat, body.lng)) * 1000) if OFFICE != (0.0, 0.0) else ""
     t = now()
     tab("Attendance", A_HEAD).append_row([t.strftime("%d/%m/%Y"), u["username"], u["name"], t.strftime("%H:%M:%S"),
-                                          round(d), body.lat, body.lng, round(body.accuracy)], value_input_option="RAW")
-    return {"checked_in": True, "time": t.strftime("%H:%M:%S"), "message": "Attendance marked. Welcome!"}
+                                          d, body.lat, body.lng, round(body.accuracy)], value_input_option="RAW")
+    return {"checked_in": True, "time": t.strftime("%H:%M:%S"), "message": "Attendance marked and your location was recorded."}
 
 def path_km(points):
     total, last = 0.0, None
@@ -108,10 +107,65 @@ def report(request: Request):
     admin_only(request)
     att = [r + [""] * (8 - len(r)) for r in tab("Attendance", A_HEAD).get_all_values()[1:] if r and r[0]]
     today = now().strftime("%d/%m/%Y")
-    present = {r[1].lower(): r[3] for r in att if r[0] == today}
+    present = {r[1].lower(): r for r in att if r[0] == today}
     staff = [{"name": u["name"], "username": u["username"], "role": u["role"],
-              "present": u["username"].lower() in present, "time": present.get(u["username"].lower(), "")}
+              "present": u["username"].lower() in present, "time": (present.get(u["username"].lower()) or [""] * 4)[3], "map": gmap(present.get(u["username"].lower()))}
              for u in load_users().values()]
     trips = [trip_row(r) for r in reversed(tab("Trips", T_HEAD).get_all_values()[1:]) if r and r[0]]
     return {"today": staff, "trips": trips[:200],
-            "attendance": [dict(zip(["date", "username", "name", "time", "distance_m"], r)) for r in reversed(att)][:200]}
+            "attendance": [{**dict(zip(["date", "username", "name", "time", "distance_m", "lat", "lng", "accuracy"], r)), "map": gmap(r)} for r in reversed(att)][:200]}
+
+
+# ---------- Services and Projects ----------
+KINDS = {
+    "services": ("Services", "S", ["serial_no", "company", "contact", "channel_partner", "address", "contact_mobile", "contact_email",
+                 "manager", "manager_mobile", "manager_email", "email_subject", "type", "generate_otp", "amount", "open_date",
+                 "expected_closure", "problem_type", "problem", "status", "priority", "document_number", "branch", "service_type",
+                 "service_amount", "description"]),
+    "projects": ("Projects", "P", ["company", "contact", "channel_partner", "address", "contact_mobile", "contact_email", "manager",
+                 "manager_mobile", "manager_email", "project_name", "source", "show_in_pdf", "source_details", "start_date",
+                 "expected_end_date", "status", "priority", "document_number", "branch", "service_type", "project_cost", "description"]),
+}
+ACTION_KEYS = ["mode", "activity_type", "date", "time", "alert_unit", "alert_value", "actor", "notify_mobile", "mobile",
+               "notify_email", "email", "instruction"]
+
+class Record(BaseModel):
+    data: dict[str, str] = {}
+    action: dict[str, str] | None = None
+
+def kind_of(kind):
+    if kind not in KINDS: raise HTTPException(404, "Unknown page")
+    return KINDS[kind]
+
+def head(kind):
+    return ["ID", "Created", "Created by"] + [k.replace("_", " ").title() for k in KINDS[kind][2]] + ["Schedule action"]
+
+@router.get("/api/people")
+def people():
+    return [{"name": u["name"], "role": u["role"]} for u in load_users().values()]
+
+@router.get("/api/records/{kind}")
+def list_records(kind: str):
+    name, _, keys = kind_of(kind)
+    cols = ["id", "created", "created_by"] + keys + ["action"]
+    out = []
+    for r in reversed(tab(name, head(kind)).get_all_values()[1:]):
+        if not r or not r[0]: continue
+        d = dict(zip(cols, r + [""] * (len(cols) - len(r))))
+        try: d["action"] = json.loads(d["action"]) if d["action"] else None
+        except ValueError: d["action"] = None
+        out.append(d)
+    return out[:500]
+
+@router.post("/api/records/{kind}", status_code=201)
+def add_record(kind: str, body: Record, request: Request):
+    name, prefix, keys = kind_of(kind)
+    u = request.state.user
+    if not body.data.get("company", "").strip(): raise HTTPException(400, "Company is required")
+    if kind == "projects" and not body.data.get("project_name", "").strip(): raise HTTPException(400, "Project name is required")
+    ws = tab(name, head(kind))
+    rid = f"{prefix}-{len(ws.get_all_values()):04d}"
+    vals = [body.data.get(k, "").strip()[:2000] for k in keys]
+    act = json.dumps({k: body.action.get(k, "")[:500] for k in ACTION_KEYS}) if body.action else ""
+    ws.append_row([rid, now().strftime("%d/%m/%Y %H:%M"), u["name"]] + vals + [act], value_input_option="RAW")
+    return {"id": rid}

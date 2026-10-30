@@ -62,7 +62,8 @@ function Login({ onLogin }) {
   return (
     <div className="auth">
       <form className="card login" onSubmit={submit}>
-        <div className="brand"><span className="logo">✓</span>GVR Tasks</div>
+        <img className="logo-full" src="/logo.png" alt="GVR Groups" />
+        <div className="brand">GVR ERP</div>
         <h1>Sign in</h1>
         <p className="muted">Sign in to continue to your account.</p>
         <label>Username<input autoFocus required autoComplete="username" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></label>
@@ -80,6 +81,9 @@ function Shell({ user, logout }) {
   const [live, setLive] = useState(true);
   const [error, setError] = useState("");
   const [form, setForm] = useState(null);
+  const [known, setKnown] = useState([]);
+  useEffect(() => { api("/api/people").then((p) => setKnown(p.map((x) => x.name))).catch(() => {}); }, []);
+  const people = mergeNames(known, tasks.flatMap((t) => [t.assigned_to, t.assigned_by]));
   const reload = async () => setTasks(await api("/api/tasks"));
 
   useEffect(() => {
@@ -106,12 +110,12 @@ function Shell({ user, logout }) {
   };
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const isAdmin = user.role.toLowerCase() === "admin";
-  const nav = [["dashboard", "Dashboard"], ["tasks", "Tasks"], ["attendance", "Attendance"], ["track", "Track"], ...(isAdmin ? [["admin", "Admin report"]] : []), ["profile", "Profile"]];
+  const nav = [["dashboard", "Dashboard"], ["tasks", "Tasks"], ["services", "Services"], ["projects", "Projects"], ["attendance", "Attendance"], ["track", "Track"], ...(isAdmin ? [["admin", "Admin report"]] : []), ["profile", "Profile"]];
 
   return (
     <div className="app">
       <aside>
-        <div className="brand"><span className="logo">✓</span>GVR Tasks</div>
+        <div className="brand"><img className="logo-img" src="/logo-mark.png" alt="" />GVR ERP</div>
         <nav>{nav.map(([k, label]) => <button key={k} className={page === k ? "nav active" : "nav"} onClick={() => setPage(k)}>{label}</button>)}</nav>
         <button className="nav out" onClick={logout}>Logout</button>
       </aside>
@@ -126,6 +130,8 @@ function Shell({ user, logout }) {
         {page === "profile" && <Profile user={user} tasks={tasks} logout={logout} />}
         {page === "attendance" && <Attendance />}
         {page === "track" && <Track />}
+        {page === "services" && <Records key="services" kind="services" user={user} people={people} />}
+        {page === "projects" && <Records key="projects" kind="projects" user={user} people={people} />}
         {page === "admin" && isAdmin && <Admin />}
       </div>
 
@@ -194,7 +200,19 @@ function Dashboard({ user, tasks, go }) {
 function Tasks({ tasks, patch, act, open }) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
-  const shown = tasks.filter((t) => (tab === "All" || t.status === tab) && `${t.task} ${t.assigned_to} ${t.assigned_by} ${t.work_update}`.toLowerCase().includes(q.toLowerCase()));
+  const [sort, setSort] = useState({ key: null, dir: 1 });
+  const cols = [["task", "Title"], ["assigned_to", "Assigned to"], ["assigned_by", "Assigned by"], ["due", "Due"], ["status", "Status"]];
+  const val = (t, k) => (k === "due" ? parseD(t.deadline)?.getTime() ?? Infinity : k === "status" ? STATUSES.indexOf(t.status) : (t[k] || "").toLowerCase());
+  const cmp = (a, b) => {
+    const x = val(a, sort.key), y = val(b, sort.key);
+    if (x === y) return 0;
+    if (x === Infinity) return 1;
+    if (y === Infinity) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * sort.dir;
+  };
+  const toggle = (k) => setSort((s) => (s.key === k ? { key: k, dir: -s.dir } : { key: k, dir: 1 }));
+  const filtered = tasks.filter((t) => (tab === "All" || t.status === tab) && `${t.task} ${t.assigned_to} ${t.assigned_by} ${t.work_update}`.toLowerCase().includes(q.toLowerCase()));
+  const shown = sort.key ? [...filtered].sort(cmp) : filtered;
   return (
     <>
       <div className="row between wrap">
@@ -204,7 +222,11 @@ function Tasks({ tasks, patch, act, open }) {
       <div className="tabs">{["All", ...STATUSES].map((s) => <button key={s} className={tab === s ? "tab active" : "tab"} onClick={() => setTab(s)}>{s} ({s === "All" ? tasks.length : count(tasks, s)})</button>)}</div>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Title</th><th>Assigned to</th><th>Assigned by</th><th>Due</th><th>Status</th><th /></tr></thead>
+          <thead><tr>{cols.map(([k, label]) => (
+            <th key={k} aria-sort={sort.key === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+              <button className="sortbtn" onClick={() => toggle(k)}>{label}<span>{sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : " ↕"}</span></button>
+            </th>
+          ))}<th /></tr></thead>
           <tbody>
             {shown.map((t) => (
               <tr key={t.id}>
@@ -278,7 +300,7 @@ function Attendance() {
   return (
     <>
       <h1>Attendance</h1>
-      <p className="muted">Mark your attendance when you reach the office. Your location is checked against the office.</p>
+      <p className="muted">Tap the button to mark your attendance. Your location is recorded at that moment.</p>
       <div className="card center">
         <h2>{ok ? `Present today · ${info.time}` : "Not marked yet today"}</h2>
         {!ok && <button className="primary big" disabled={busy} onClick={mark}>{busy ? "Checking location…" : "Mark attendance"}</button>}
@@ -388,8 +410,8 @@ function Admin() {
           .map(([l, v]) => <div className="card stat" key={l}><span className="muted">{l}</span><b>{v}</b></div>)}
       </div>
       <section className="card"><h2>Today's attendance</h2>
-        <div className="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Time</th></tr></thead>
-          <tbody>{d.today.map((s) => <tr key={s.username}><td>{s.name}</td><td>{s.role}</td><td><span className={"pill " + (s.present ? "completed" : "")}>{s.present ? "Present" : "Not yet"}</span></td><td>{s.time || "—"}</td></tr>)}</tbody></table></div>
+        <div className="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Time</th><th>Location</th></tr></thead>
+          <tbody>{d.today.map((s) => <tr key={s.username}><td>{s.name}</td><td>{s.role}</td><td><span className={"pill " + (s.present ? "completed" : "")}>{s.present ? "Present" : "Not yet"}</span></td><td>{s.time || "—"}</td><td>{s.map ? <a href={s.map} target="_blank" rel="noreferrer">Map</a> : "—"}</td></tr>)}</tbody></table></div>
       </section>
       <section className="card"><h2>Trips and petrol</h2>
         <div className="scroll"><table><thead><tr><th>Date</th><th>Name</th><th>Destination</th><th>Vehicle</th><th>Time</th><th>Distance</th><th>Petrol</th><th>Cost</th><th>Route</th></tr></thead>
@@ -397,8 +419,8 @@ function Admin() {
         {!d.trips.length && <p className="muted pad">No trips yet.</p>}
       </section>
       <section className="card"><h2>Attendance history</h2>
-        <div className="scroll"><table><thead><tr><th>Date</th><th>Name</th><th>Time</th><th>Distance from office</th></tr></thead>
-          <tbody>{d.attendance.map((a, i) => <tr key={i}><td>{a.date}</td><td>{a.name}</td><td>{a.time}</td><td>{a.distance_m} m</td></tr>)}</tbody></table></div>
+        <div className="scroll"><table><thead><tr><th>Date</th><th>Name</th><th>Time</th><th>Distance from office</th><th>Location</th></tr></thead>
+          <tbody>{d.attendance.map((a, i) => <tr key={i}><td>{a.date}</td><td>{a.name}</td><td>{a.time}</td><td>{a.distance_m ? a.distance_m + " m" : "—"}</td><td>{a.map ? <a href={a.map} target="_blank" rel="noreferrer">Map</a> : "—"}</td></tr>)}</tbody></table></div>
         {!d.attendance.length && <p className="muted pad">No attendance yet.</p>}
       </section>
     </>
@@ -429,5 +451,159 @@ function Password() {
       {msg && <div className={msg.bad ? "error" : "okmsg"} role="status">{msg.text}</div>}
       <button className="primary" disabled={busy}>{busy ? "Saving…" : "Change password"}</button>
     </form>
+  );
+}
+
+
+/* ---------- Services and Projects ---------- */
+function mergeNames(...lists) {  // names already involved, "Ranjith" + "Ranjith Kumar" count as one
+  const out = [];
+  lists.flat().filter(Boolean).forEach((n) => {
+    const l = n.toLowerCase();
+    const i = out.findIndex((o) => o.toLowerCase().startsWith(l) || l.startsWith(o.toLowerCase()));
+    if (i < 0) out.push(n); else if (n.length > out[i].length) out[i] = n;
+  });
+  return out.sort((a, b) => a.localeCompare(b));
+}
+const pad = (n) => String(n).padStart(2, "0");
+const todayDMY = () => { const d = new Date(); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; };
+const nowHM = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const ACTIVITY = ["Fault", "Installation", "Maintenance", "Follow-up", "Meeting", "Payment"];
+const PRIORITY = ["Low", "Normal", "High", "Urgent"];
+const SERVICE_TYPES = ["Installation", "Repair", "AMC", "Support"];
+// field = [key, label, type, options, default]
+const COMPANY = [["company", "Company", "text"], ["contact", "Contact", "text"], ["channel_partner", "Channel partner", "text"], ["address", "Address", "text"],
+  ["contact_mobile", "Mobile", "text"], ["contact_email", "Email", "email"], ["manager", "Manager", "text"], ["manager_mobile", "Manager mobile", "text"], ["manager_email", "Manager email", "email"]];
+const KINDS = {
+  services: {
+    title: "Services", modal: "Add service", submit: "Ticket", activity: "Fault",
+    company: [["serial_no", "Serial no.", "text"], ...COMPANY, ["email_subject", "Email subject line", "text"]],
+    details: [["type", "Type", "select", ["Chargeable", "Non-chargeable", "Warranty", "AMC"], "Chargeable"], ["generate_otp", "Generate OTP", "check"],
+      ["amount", "Amount", "number", null, "0"], ["open_date", "Open date", "date", null, "today"], ["expected_closure", "Expected closure date", "date", null, "today"],
+      ["problem_type", "Problem type", "select", ["Fault", "Installation", "Maintenance", "Other"], "Fault"], ["problem", "Problem", "text"],
+      ["status", "Status", "select", ["New", "In Progress", "Resolved", "Closed"], "New"], ["priority", "Priority", "select", PRIORITY, "Normal"],
+      ["document_number", "Document number", "text"], ["branch", "Branch", "text", null, "Chennai Head Office"],
+      ["service_type", "Service type", "select", SERVICE_TYPES, ""], ["service_amount", "Service amount", "number", null, "0"]],
+    cols: [["id", "ID"], ["company", "Company"], ["contact", "Contact"], ["service_type", "Service type"], ["problem_type", "Problem"], ["status", "Status"], ["priority", "Priority"], ["expected_closure", "Closure date"], ["amount", "Amount"]],
+  },
+  projects: {
+    title: "Projects", modal: "Create project", submit: "Create project", activity: "Follow-up",
+    company: [...COMPANY, ["project_name", "Project name", "text"]],
+    details: [["source", "Source", "select", ["Campaign", "Reference", "Website", "Walk-in", "Existing customer"], "Campaign"], ["show_in_pdf", "Show in PDF", "check"],
+      ["source_details", "Source details", "text"], ["start_date", "Start date", "date", null, "today"], ["expected_end_date", "Expected end date", "date", null, "today"],
+      ["status", "Status", "select", ["Planned", "In Progress", "On Hold", "Completed"], "In Progress"], ["priority", "Priority", "select", PRIORITY, "Normal"],
+      ["document_number", "Document number", "text"], ["branch", "Branch", "text", null, "Chennai Head Office"],
+      ["service_type", "Service type", "select", SERVICE_TYPES, ""], ["project_cost", "Project cost", "number", null, "0"]],
+    cols: [["id", "ID"], ["project_name", "Project"], ["company", "Company"], ["source", "Source"], ["status", "Status"], ["priority", "Priority"], ["start_date", "Start"], ["expected_end_date", "End"], ["project_cost", "Cost"]],
+  },
+};
+
+function Field({ f, v, set }) {
+  const [key, label, type, opts] = f;
+  if (type === "check") return <label className="chk"><input type="checkbox" checked={v === "Yes"} onChange={(e) => set(key, e.target.checked ? "Yes" : "No")} />{label}</label>;
+  if (type === "select") return <label>{label}<select value={v} onChange={(e) => set(key, e.target.value)}><option value="">Select…</option>{opts.map((o) => <option key={o}>{o}</option>)}</select></label>;
+  if (type === "date") return <label>{label}<input type="date" value={toISO(v)} onChange={(e) => set(key, toDMY(e.target.value))} /></label>;
+  return <label>{label}<input type={type} value={v} required={key === "company" || key === "project_name"} onChange={(e) => set(key, e.target.value)} /></label>;
+}
+
+function Records({ kind, user, people }) {
+  const cfg = KINDS[kind];
+  const [rows, setRows] = useState([]);
+  const [form, setForm] = useState(null);
+  const [sched, setSched] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
+  const load = () => api(`/api/records/${kind}`).then(setRows).catch((e) => setErr(e.message));
+  useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id); }, []);
+
+  const open = () => {
+    setErr("");
+    const data = {};
+    [...cfg.company, ...cfg.details].forEach(([k, , t, , d]) => { data[k] = d === "today" ? todayDMY() : t === "check" ? "No" : d ?? ""; });
+    setForm({ data: { ...data, manager: user.name, description: "" }, action: null });
+  };
+  const set = (k, v) => setForm((f) => ({ ...f, data: { ...f.data, [k]: v } }));
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true); setErr("");
+    try { await api(`/api/records/${kind}`, { method: "POST", body: JSON.stringify({ data: form.data, action: form.action }) }); setForm(null); await load(); }
+    catch (x) { setErr(x.message); }
+    setBusy(false);
+  };
+  const cell = (r, k) => k === "status" ? <span className={"pill " + slug(r[k])}>{r[k] || "—"}</span> : ["amount", "project_cost"].includes(k) ? `₹${r[k] || 0}` : r[k] || "—";
+  const shown = rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <>
+      <div className="row between wrap">
+        <div><h1>{cfg.title}</h1><p className="muted">{rows.length} {cfg.title.toLowerCase()} listed.</p></div>
+        <div className="row"><input className="search" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} /><button className="primary" onClick={open}>+ Add {cfg.title.slice(0, -1).toLowerCase()}</button></div>
+      </div>
+      {err && !form && <div className="error" role="alert">{err}</div>}
+      <div className="card scroll">
+        <table>
+          <thead><tr>{cfg.cols.map(([, l]) => <th key={l}>{l}</th>)}<th>Scheduled action</th></tr></thead>
+          <tbody>
+            {shown.map((r) => (
+              <tr key={r.id}>
+                {cfg.cols.map(([k]) => <td key={k}>{cell(r, k)}</td>)}
+                <td>{r.action ? `${r.action.mode} · ${r.action.date} ${r.action.time}${r.action.actor ? " · " + r.action.actor : ""}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!shown.length && <p className="muted pad">No {cfg.title.toLowerCase()} yet. Click "Add" to create the first one.</p>}
+      </div>
+
+      {form && (
+        <div className="overlay" onClick={() => setForm(null)}>
+          <form className="modal card rec" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+            <div className="titlebar"><h2>{cfg.modal}</h2><button type="button" aria-label="Close" onClick={() => setForm(null)}>✕</button></div>
+            <div className="panels">
+              <div><h3>For company</h3><div className="panel">{cfg.company.map((f) => <Field key={f[0]} f={f} v={form.data[f[0]]} set={set} />)}</div></div>
+              <div><h3>Details</h3><div className="panel two">{cfg.details.map((f) => <Field key={f[0]} f={f} v={form.data[f[0]]} set={set} />)}</div></div>
+              <div><h3>Description</h3><div className="panel"><textarea rows="12" value={form.data.description} onChange={(e) => set("description", e.target.value)} /></div></div>
+            </div>
+            {err && <div className="error" role="alert">{err}</div>}
+            <div className="row between">
+              <button type="button" className="link" onClick={() => setSched(true)}>Schedule action{form.action ? ` ✓ ${form.action.mode}, ${form.action.date} ${form.action.time}${form.action.actor ? ", " + form.action.actor : ""}` : ""}</button>
+              <button className="primary" disabled={busy}>{busy ? "Saving…" : cfg.submit}</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {sched && form && <Schedule initial={form.action} people={people} defType={cfg.activity} onClose={() => setSched(false)} onSave={(a) => { setForm({ ...form, action: a }); setSched(false); }} />}
+    </>
+  );
+}
+
+function Schedule({ initial, people, defType, onSave, onClose }) {
+  const [a, setA] = useState(initial || { mode: "Visit", activity_type: defType, date: todayDMY(), time: nowHM(), alert_unit: "Hours", alert_value: "1", actor: "", notify_mobile: "No", mobile: "", notify_email: "No", email: "", instruction: "" });
+  const s = (k) => (e) => setA({ ...a, [k]: e.target.value });
+  const chk = (k) => (e) => setA({ ...a, [k]: e.target.checked ? "Yes" : "No" });
+  return (
+    <div className="overlay top" onClick={onClose}>
+      <div className="modal card" onClick={(e) => e.stopPropagation()}>
+        <div className="titlebar"><h2>Schedule action</h2><button type="button" aria-label="Close" onClick={onClose}>✕</button></div>
+        <div className="modes">{[["Visit", "👤"], ["Email", "✉️"], ["Call", "📞"], ["Online", "🖥️"]].map(([m, i]) => (
+          <label key={m} className="mode"><input type="radio" name="mode" checked={a.mode === m} onChange={() => setA({ ...a, mode: m })} />{i} {m}</label>))}</div>
+        <div className="two">
+          <label>Activity type<select value={a.activity_type} onChange={s("activity_type")}>{ACTIVITY.map((o) => <option key={o}>{o}</option>)}</select></label>
+          <div className="two">
+            <label>Date<input type="date" value={toISO(a.date)} onChange={(e) => setA({ ...a, date: toDMY(e.target.value) })} /></label>
+            <label>Time<input type="time" value={a.time} onChange={s("time")} /></label>
+          </div>
+          <label>Alert before<select value={a.alert_unit} onChange={s("alert_unit")}><option>Minutes</option><option>Hours</option><option>Days</option></select></label>
+          <label>How many<select value={a.alert_value} onChange={s("alert_value")}>{[1, 2, 3, 4, 5, 6, 12, 24].map((n) => <option key={n}>{n}</option>)}</select></label>
+        </div>
+        <label>Actor<select value={a.actor} onChange={s("actor")}><option value="">Select actor</option>{people.map((n) => <option key={n}>{n}</option>)}</select></label>
+        <div className="two">
+          <label><span className="inl"><input type="checkbox" checked={a.notify_mobile === "Yes"} onChange={chk("notify_mobile")} />Mobile</span><input value={a.mobile} onChange={s("mobile")} /></label>
+          <label><span className="inl"><input type="checkbox" checked={a.notify_email === "Yes"} onChange={chk("notify_email")} />Email</span><input type="email" value={a.email} onChange={s("email")} /></label>
+        </div>
+        <label>Instruction<textarea rows="4" value={a.instruction} onChange={s("instruction")} /></label>
+        <div className="row end"><button type="button" onClick={onClose}>Cancel</button><button type="button" className="primary" onClick={() => onSave(a)}>Save</button></div>
+      </div>
+    </div>
   );
 }
