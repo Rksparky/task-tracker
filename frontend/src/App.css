@@ -92,7 +92,8 @@ a{color:var(--blue2)}
 .legend.inline{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0}
 .legend.inline b{margin-left:4px;padding-left:0}
 @media(max-width:860px){.grid2.even{grid-template-columns:1fr}}
-.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch}
+.trio>.card{margin-top:0;height:100%;display:flex;flex-direction:column}
 .sum .mini b{font-size:1.4rem}
 .piewrap{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;margin:14px 0 6px}
 .pie{width:140px;height:140px;border-radius:50%;flex:none}
